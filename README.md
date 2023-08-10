@@ -16,8 +16,8 @@
 
 ```bash
 ansible-playbook -i inventory.ini playbook.yaml
+``
 
-
-注意事项
+## 注意事项
  - 在运行脚本之前已正确配置 Ansible 环境和目标主机。
  - 仔细检查脚本和变量，以确保其符合您的具体需求。
