@@ -1,0 +1,80 @@
+---
+- hosts: target_hosts
+  gather_facts: no
+  tasks:
+    - name: "执行 goVersions-huawe-hce2.0 程序生成 defaults/main.yaml"
+      delegate_to: localhost
+      command: ../plugins/goVersions-huawe-hce2.0
+      register: goVersion_output
+      changed_when: false
+
+    - name: "导入生成的 defaults/main.yaml 变量"
+      include_vars: "../defaults/main.yaml"
+
+    - name: "确保 /usr/local/go/release 目录存在"
+      file:
+        path: /usr/local/go/release
+        state: directory
+
+    - name: "下载 Go tarball"
+      get_url:
+        url: "{{ go_download_location }}"
+        dest: /usr/local/src/{{ go_tarball }}
+        #checksum: "{{ go_tarball_checksum }}"
+
+    - name: "检查当前系统上是否已经安装了 Go 语言，以及安装的版本是否和目标版本一致"
+      command: /usr/local/go/current/bin/go version
+      ignore_errors: yes
+      register: go_version
+      changed_when: false
+
+    - name: "如果 Go 尚未安装或版本不合适，则解压 Go tarball"
+      unarchive:
+        src: /usr/local/src/{{ go_tarball }}
+        dest: /usr/local/go/release
+        remote_src: yes
+      when: go_version is failed or go_version.stdout != go_version_target
+      register: extracted_tarball
+
+    - name: "更新 Go 软链接"
+      file:
+        src: /usr/local/go/release/{{ go_tarball | regex_replace('\\.tar\\.gz$', '') }}
+        dest: /usr/local/go/current
+        state: link
+      when: extracted_tarball.changed
+
+    - name: "查找已安装的 Go 版本并按时间排序"
+      find:
+        paths: /usr/local/go/release
+        file_type: directory
+        age: -1d
+      register: installed_go_versions
+
+    - name: "整理并提取除最新 5 个之外的所有 Go 版本目录"
+      set_fact:
+        go_versions_to_remove: "{{ installed_go_versions.files | sort(attribute='mtime', reverse=true) | map(attribute='path') | list | slice(start=5) | list }}"
+
+    - name: "删除除最新 5 个版本之外的所有 Go 版本"
+      file:
+        path: "{{ item }}"
+        state: absent
+      loop: "{{ go_versions_to_remove }}"
+      when: go_version is failed or go_version.stdout != go_version_target
+
+    - name: "使用提供的内容在 /etc/profile.d 中创建 go.sh 文件"
+      copy:
+        content: |
+          export GOROOT=/usr/local/go/current
+          export GIN_MODE=release
+          export PATH=$PATH:$GOROOT/bin
+          export GO111MODULE=on
+          export GOPROXY=https://goproxy.cn
+        dest: /etc/profile.d/go.sh
+        mode: 0644
+      notify:
+        - Reload shell
+  handlers:
+    - name: Reload shell
+      command: source /etc/profile
+      args:
+        warn: no
